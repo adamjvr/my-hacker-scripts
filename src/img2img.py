@@ -2,14 +2,15 @@
 """
 img2img.py
 ----------
-Multithreaded Image Format Converter with Compression and Progress Display.
+Multithreaded Image Format Converter with Compression, Progress Display, and
+Optional Output Directory Selection.
 
 Description:
 ------------
 This Python script allows you to convert a batch of images (either from a folder
 or from within a ZIP archive) into a desired output format (PNG, JPEG, GIF, WebP).
 It supports adjustable compression levels (0–9), multithreading for faster
-processing, and a live progress bar.
+processing, a live progress bar, and an optional user-specified output folder.
 
 Author: Adam Vadala-Roth
 Date: 2025-10-09
@@ -22,8 +23,8 @@ python img2img.py /path/to/folder -p -c 6
 # Convert a ZIP of images to JPEG with compression level 3
 python img2img.py /path/to/images.zip -jp -c 3
 
-# Convert a folder to WebP using 8 threads
-python img2img.py ./my_images -we -t 8
+# Convert a folder to WebP using 8 threads, saving results to a custom output directory
+python img2img.py ./my_images -we -t 8 -o ./converted
 """
 
 # ============================
@@ -45,7 +46,8 @@ from tqdm import tqdm  # For showing progress bars
 # ============================
 
 # Pillow (PIL) is used for all image operations such as reading and saving.
-# If not installed, install with: pip install pillow
+# If not installed, install it using:
+#     pip install pillow
 from PIL import Image
 
 
@@ -71,12 +73,12 @@ def extract_zip(zip_path):
     Notes:
     ------
     - This function uses tempfile.mkdtemp() to create a unique folder.
-    - The folder is automatically placed in the system's temp directory.
-    - The function assumes the ZIP archive contains image files.
+    - The folder is automatically placed in the system's temporary directory.
+    - The extracted folder is used as the working directory for conversions.
     """
-    temp_dir = tempfile.mkdtemp(prefix="img2img_")  # Create temp folder
+    temp_dir = tempfile.mkdtemp(prefix="img2img_")
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(temp_dir)  # Extract contents
+        zip_ref.extractall(temp_dir)
     return temp_dir
 
 
@@ -108,71 +110,51 @@ def convert_image(input_path, output_dir, fmt, compression_level):
     - Each image is saved with format-specific compression parameters.
     """
     try:
-        # Open the image file using Pillow (PIL)
         with Image.open(input_path) as img:
-            # Extract base filename (without extension)
             base_name = Path(input_path).stem
-
-            # Construct the new output path for the converted image
             output_path = os.path.join(output_dir, f"{base_name}.{fmt.lower()}")
-
-            # Dictionary that will hold the format-specific save parameters
             save_kwargs = {}
 
-            # Handle compression/quality parameters based on selected format
+            # Adjust compression/quality parameters depending on format
             if fmt == "JPEG":
-                # JPEG uses "quality" parameter from 1 to 95 (higher = better quality)
-                # Compression level 0 → quality 95; Compression level 9 → quality 5
                 quality = max(1, 95 - compression_level * 10)
                 save_kwargs = {"quality": quality, "optimize": True}
-
             elif fmt == "PNG":
-                # PNG uses a compression level from 0 (none) to 9 (maximum)
                 save_kwargs = {"compress_level": compression_level}
-
             elif fmt == "WEBP":
-                # WebP uses quality similar to JPEG
                 quality = max(1, 95 - compression_level * 10)
                 save_kwargs = {"quality": quality}
-
             elif fmt == "GIF":
-                # GIF doesn’t use numeric compression but can be optimized
                 save_kwargs = {"optimize": True}
 
-            # Convert the image to RGB color mode to ensure compatibility with all formats
+            # Convert to RGB to avoid errors (e.g. saving RGBA as JPEG)
             img.convert("RGB").save(output_path, fmt, **save_kwargs)
-
-            # Return a success message
             return f"[OK] {os.path.basename(input_path)}"
 
     except Exception as e:
-        # Catch and return any exception that occurred during conversion
         return f"[ERROR] {os.path.basename(input_path)}: {e}"
 
 
 def get_all_images(folder):
     """
-    Recursively list all supported image files in a directory.
+    Recursively find all supported image files in a given directory.
 
     Parameters:
     -----------
     folder : str or Path
-        Directory to scan for image files.
+        Path to directory where image files will be searched.
 
     Returns:
     --------
     image_files : list
-        List of full paths to all supported images found in the directory.
+        A list of full file paths to image files.
 
     Notes:
     ------
-    - Searches recursively (includes subfolders).
+    - Searches all subdirectories recursively.
     - Only files with known image extensions are included.
     """
-    # Define supported extensions
     exts = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp")
-
-    # Walk through directory tree and collect valid image file paths
     return [
         os.path.join(dp, f)
         for dp, _, files in os.walk(folder)
@@ -182,30 +164,30 @@ def get_all_images(folder):
 
 
 # ============================
-# Main Program Entry Point
+# Main Function
 # ============================
 
 
 def main():
     """
-    Main function that parses command-line arguments, validates input,
-    sets up multithreading, and executes the image conversion pipeline.
+    Main program entry point.
+
+    Handles:
+    - Parsing command-line arguments
+    - Validating user input
+    - Extracting ZIP archives (if provided)
+    - Spawning multiple threads for image conversion
+    - Displaying progress and summary statistics
     """
 
     # ---------------------------
-    # Argument Parser Setup
+    # Argument Parsing
     # ---------------------------
-
     parser = argparse.ArgumentParser(
         description="Convert images in bulk to another format with optional compression."
     )
 
-    # Required positional argument: path to folder or ZIP file
-    parser.add_argument(
-        "path", help="Path to a folder of images or a ZIP file containing images."
-    )
-
-    # Optional arguments:
+    parser.add_argument("path", help="Path to a folder or ZIP file containing images.")
     parser.add_argument(
         "-c",
         "--compression",
@@ -222,27 +204,28 @@ def main():
         "--threads",
         type=int,
         default=multiprocessing.cpu_count(),
-        help="Number of threads to use (default = number of CPU cores).",
+        help="Number of threads to use. Default = number of CPU cores.",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Optional custom output directory. Default: auto-named next to input folder.",
     )
 
-    # Parse command-line arguments into the 'args' object
     args = parser.parse_args()
 
     # ---------------------------
-    # Determine Target Format
+    # Determine Format
     # ---------------------------
-
-    # Map argument flags to their corresponding image formats
     format_map = {"p": "PNG", "jp": "JPEG", "g": "GIF", "we": "WEBP"}
-
-    # Check which format flag was used and store the result
     selected_format = None
     for key, fmt in format_map.items():
         if getattr(args, key):
             selected_format = fmt
             break
 
-    # If no format flag was provided, print error and exit
     if not selected_format:
         print("Error: You must specify a target format (-p, -jp, -g, or -we).")
         sys.exit(1)
@@ -250,32 +233,23 @@ def main():
     # ---------------------------
     # Validate Compression Level
     # ---------------------------
-
     if not (0 <= args.compression <= 9):
         print("Error: Compression must be between 0 and 9.")
         sys.exit(1)
 
     # ---------------------------
-    # Validate Input Path
+    # Validate and Prepare Input
     # ---------------------------
-
     input_path = Path(args.path)
-
-    # If input path doesn’t exist, abort
     if not input_path.exists():
         print(f"Error: Path not found: {input_path}")
         sys.exit(1)
 
-    # If path is a ZIP file, extract it first
     if zipfile.is_zipfile(input_path):
         print(f"Extracting ZIP archive: {input_path}")
         working_dir = extract_zip(input_path)
-
-    # If it’s a directory, use it directly
     elif input_path.is_dir():
         working_dir = input_path
-
-    # Otherwise, reject it as an invalid input
     else:
         print("Error: Path must be a folder or a ZIP archive.")
         sys.exit(1)
@@ -283,36 +257,31 @@ def main():
     # ---------------------------
     # Prepare Output Directory
     # ---------------------------
+    if args.output:
+        output_dir = Path(args.output)
+    else:
+        output_dir = Path(f"{working_dir}_converted_{selected_format.lower()}")
 
-    # Create an output folder based on the input name and target format
-    output_dir = Path(f"{working_dir}_converted_{selected_format.lower()}")
-    os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
+    os.makedirs(output_dir, exist_ok=True)
 
     # ---------------------------
-    # Collect Image Files
+    # Gather Image Files
     # ---------------------------
-
     images = get_all_images(working_dir)
-
     if not images:
         print("No images found to convert.")
         sys.exit(0)
 
-    # Display summary before conversion
     print(
-        f"Converting {len(images)} images to {selected_format} using {args.threads} threads...\n"
+        f"Converting {len(images)} images to {selected_format} using {args.threads} threads..."
     )
+    print(f"Output directory: {output_dir}\n")
 
     # ---------------------------
     # Multithreaded Conversion
     # ---------------------------
-
     results = []
-
-    # ThreadPoolExecutor allows parallel conversion of multiple images.
-    # Each thread handles one image at a time.
     with ThreadPoolExecutor(max_workers=args.threads) as executor:
-        # Submit each conversion task to the thread pool
         futures = {
             executor.submit(
                 convert_image, img, output_dir, selected_format, args.compression
@@ -320,22 +289,17 @@ def main():
             for img in images
         }
 
-        # Use tqdm to display progress bar as each image completes
         for future in tqdm(
             as_completed(futures), total=len(futures), desc="Converting", unit="img"
         ):
-            result = future.result()  # Retrieve the result string from each thread
-            results.append(result)
+            results.append(future.result())
 
     # ---------------------------
-    # Post-Processing and Summary
+    # Print Conversion Summary
     # ---------------------------
-
-    # Count success and failure results for summary
     success_count = sum(1 for r in results if r.startswith("[OK]"))
     fail_count = len(results) - success_count
 
-    # Print summary of all results
     print("\n--- Conversion Summary ---")
     for r in results:
         print(r)
