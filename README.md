@@ -29,12 +29,12 @@ python md2pdf.py <your_markdown_file>.md
 
 **Description:**  
 This Python script converts a folder or ZIP archive of images into a specified format (PNG, JPEG, GIF, or WEBP) with optional compression.  
-It supports multithreading for faster batch conversion and automatically extracts ZIP files before processing.  
-Useful for preparing images for web uploads, archiving, or batch reformatting while maintaining efficient compression control.
+It supports multithreading for faster batch conversion, automatically extracts ZIP files, and allows you to specify a destination folder for output.  
+Perfect for preparing image sets for the web, archiving, or automated processing pipelines.
 
 **Usage:**  
 ```bash
-python img2img.py <path_to_folder_or_zip> [-p | -jp | -g | -we] [-c <compression_level>]
+python img2img.py <path_to_folder_or_zip> [-p | -jp | -g | -we] [-c <compression_level>] [-o <output_folder>]
 ```
 
 **Arguments:**
@@ -46,22 +46,28 @@ python img2img.py <path_to_folder_or_zip> [-p | -jp | -g | -we] [-c <compression
 - `-c <compression_level>` — Optional compression level (0–9).  
   - `0` = no compression (maximum quality)  
   - `9` = maximum compression (lower quality)
+- `-o <output_folder>` — Optional destination folder where converted images will be saved.
 
-**Example:**  
+**Examples:**  
 ```bash
 python img2img.py ./images -jp -c 6
 ```
-Converts all images in the `images` folder to JPEG format with moderate compression.
+Converts all images in the `images` folder to JPEG format with medium compression.
+
+```bash
+python img2img.py ./photos.zip -we -c 3 -o ./web_ready
+```
+Extracts `photos.zip`, converts all contained images to WEBP format, applies light compression, and saves them to `./web_ready`.
 
 **How it works:**
 
-1. Checks whether the given path is a folder or a ZIP archive.  
-2. If ZIP, extracts all images into a temporary directory.  
-3. Scans the directory for supported image files (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, etc.).  
-4. Uses a multithreaded worker pool to process multiple images in parallel for speed.  
-5. Converts each image to the desired format and applies the specified compression level.  
-6. Saves the converted images in a new output folder named `converted_<format>` in the same directory.  
-7. Cleans up any temporary files if a ZIP was extracted.  
+1. Detects whether the input is a folder or ZIP archive.  
+2. If ZIP, extracts its contents to a temporary directory.  
+3. Recursively scans for supported image formats (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tiff`).  
+4. Spawns multiple threads to convert images concurrently for speed.  
+5. Converts images to the target format and applies the specified compression level.  
+6. Saves all converted files to either the user-defined output folder or a new folder named `converted_<format>`.  
+7. Cleans up any temporary files automatically if a ZIP was used.  
 
 ---
 
