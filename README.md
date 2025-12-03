@@ -71,6 +71,32 @@ Extracts `photos.zip`, converts all contained images to WEBP format, applies lig
 
 ---
 
+### 3. EPUB to PDF Converter with TOC (`epub_to_pdf_toc_chapters.py`)
+
+**Description:**  
+A fully self-contained Python utility that converts **EPUB** files into clean, well-structured **PDFs**. It preserves formatting, embeds images, generates a clickable **Table of Contents**, and ensures every chapter starts on a new page. This makes it ideal for turning ebooks, documentation, or long-form notes into polished, portable PDFs.
+
+**Key Features:**  
+- **Preserves formatting** (headings, lists, blockquotes, inline styles).  
+- **Embeds all images** using base64 `data:` URIs — no external files required.  
+- **Auto-generates a clickable TOC** based on chapter headings or fallbacks.  
+- **Starts each chapter on a new page** for clean structure.  
+- **Writes a debug HTML file** so you can inspect the intermediate output.  
+- Works entirely offline and produces a single, portable PDF.
+
+**Usage:**  
+```bash
+python epub_to_pdf_toc_chapters.py input.epub output.pdf
+```
+
+**Dependencies:**  
+```
+ebooklib
+beautifulsoup4
+xhtml2pdf
+```
+---
+
 ## License
 
 This project is licensed under the **MIT License**.  
