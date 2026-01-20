@@ -120,7 +120,7 @@ python rmmimg.py /path/to/images --in-place
 
 # Limit CPU usage
 python rmmimg.py /path/to/images --workers 8
-
+```
 
 
 ## License
