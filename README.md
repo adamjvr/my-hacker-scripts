@@ -97,6 +97,32 @@ xhtml2pdf
 ```
 ---
 
+### X. Parallel Image Metadata Remover & Renamer (`rmmimg.py`)
+
+**Description**  
+Strips *all* metadata (EXIF, XMP, IPTC, PNG text, etc.) from a folder of images and renames them to
+`image0.ext`, `image1.ext`, ... based on file creation time.  
+Uses all CPU cores to process images in parallel and shows a live progress bar in the terminal.
+
+Designed for cleaning datasets, anonymizing photos, and preparing image batches for ML training or uploads.
+
+**Usage**
+
+```bash
+# Basic usage (oldest file becomes image0)
+python rmmimg.py /path/to/images
+
+# Newest file becomes image0
+python rmmimg.py /path/to/images --newest-first
+
+# Replace originals (creates backup first)
+python rmmimg.py /path/to/images --in-place
+
+# Limit CPU usage
+python rmmimg.py /path/to/images --workers 8
+
+
+
 ## License
 
 This project is licensed under the **MIT License**.  
