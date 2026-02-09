@@ -97,7 +97,7 @@ xhtml2pdf
 ```
 ---
 
-### X. Parallel Image Metadata Remover & Renamer (`rmmimg.py`)
+### 4. Parallel Image Metadata Remover & Renamer (`rmmimg.py`)
 
 **Description**  
 Strips *all* metadata (EXIF, XMP, IPTC, PNG text, etc.) from a folder of images and renames them to
@@ -121,6 +121,99 @@ python rmmimg.py /path/to/images --in-place
 # Limit CPU usage
 python rmmimg.py /path/to/images --workers 8
 ```
+
+### 5. Advanced Image Deduplication Tool (`dedupe_images.py`)
+
+**Description:**  
+This Python script scans a folder of images and **detects visually duplicate images**, even if they have different filenames, resolutions, or compression levels (common in scraped or downloaded collections).
+
+Instead of relying on filenames or byte-for-byte checks, it uses **perceptual hashing (dHash)** to compare how images *look*.  
+For each group of duplicates, it automatically keeps the **highest-quality version** and removes or relocates the rest.
+
+Designed to be safe and reliable on Linux systems (including Pop!_OS), avoiding SciPy/NumPy ABI issues.
+
+---
+
+**Key Features:**
+- Detects visually identical or near-identical images
+- **Keeps highest-resolution image** per duplicate set
+- Uses **largest file size as a tie-breaker**
+- Optional **move duplicates** instead of deleting them
+- Optional **CSV report** for auditability
+- Recursive folder scanning
+- **Progress bars** for hashing and comparison
+- No SciPy dependency
+
+---
+
+**Usage:**
+
+```bash
+python dedupe_images.py /path/to/image/folder
+```
+
+This will:
+- Recursively scan the folder
+- Identify duplicate images
+- **Delete lower-quality duplicates**
+- Keep the best version of each image
+
+---
+
+**Move duplicates instead of deleting:**
+
+```bash
+python dedupe_images.py /path/to/image/folder \
+  --move-duplicates /path/to/duplicates
+```
+
+All duplicates will be moved into the specified directory rather than removed.
+
+---
+
+**Generate a CSV report:**
+
+```bash
+python dedupe_images.py /path/to/image/folder \
+  --csv-report dedupe_report.csv
+```
+
+The CSV includes:
+- Kept file path
+- Duplicate file path
+- Resolution comparison
+- File size comparison
+- Hash distance
+- Action taken (deleted or moved)
+
+---
+
+**Move duplicates *and* write a CSV report:**
+
+```bash
+python dedupe_images.py /path/to/image/folder \
+  --move-duplicates ./duplicates \
+  --csv-report dedupe_report.csv
+```
+
+---
+
+**How it works:**
+
+1. Recursively scans for supported image formats  
+2. Computes a perceptual **dHash** for each image  
+3. Compares hashes using Hamming distance  
+4. Groups images that look the same  
+5. Keeps the highest-resolution / largest-file image  
+6. Deletes or moves the rest  
+7. Optionally logs all actions to CSV  
+
+---
+
+**Notes:**
+- Comparison step is **O(n²)** — large collections may take time
+- Always test on a copy if data is irreplaceable
+- Optimized for correctness and quality preservation, not lossy cleanup
 
 
 ## License
