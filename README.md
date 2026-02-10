@@ -215,6 +215,95 @@ python dedupe_images.py /path/to/image/folder \
 - Always test on a copy if data is irreplaceable
 - Optimized for correctness and quality preservation, not lossy cleanup
 
+---
+
+### 6. x265_encode.py — H.265 / HEVC Encoder Wrapper
+
+`x265_encode.py` is a **robust, explicit Python CLI wrapper around ffmpeg**
+for encoding videos using **H.265 / x265 (libx265)** with sane defaults and
+power-user extensions.
+
+It is designed for **predictable behavior**, **batch safety**, and
+**long-running encodes**.
+
+---
+
+## Default Encoding Behavior
+
+- Video: **H.265 / x265 (libx265)**
+- CRF: **23**
+- Preset: **medium**
+- Pixel format: **yuv420p**
+- Container: **MKV**
+- Audio: **AAC @ 192 kbps**
+- Streaming-friendly output (`+faststart`)
+
+Defaults are intentionally conservative and broadly compatible.
+
+---
+
+## Features
+
+- Optional **MP4** output container
+- Container-aware **subtitle handling**
+  - MKV: copy subtitles
+  - MP4: convert to `mov_text`
+- Optional **10-bit HEVC**
+- Hardware encoder support:
+  - VAAPI
+  - NVENC
+  - AMF
+- **Batch directory encoding**
+- **Progress bar with ETA** (ffprobe-based)
+- Explicit stream mapping (no ffmpeg surprises)
+- Safe handling of missing audio or subtitle streams
+
+---
+
+## Usage Examples
+
+```bash
+# Default (MKV, safest)
+python x265_encode.py input.mp4
+
+# MP4 output (browser / Apple-friendly)
+python x265_encode.py input.mkv --container mp4
+
+# Higher quality encode
+python x265_encode.py input.mp4 -c 20
+
+# Archive-quality slow encode
+python x265_encode.py input.mkv -p slow
+
+# Preserve original audio
+python x265_encode.py input.mkv --audio-copy
+
+# Batch encode a directory
+python x265_encode.py dummy --batch-dir ./videos
+```
+
+---
+
+## Requirements
+
+- `ffmpeg`
+- `ffprobe`
+- Python 3.9+
+
+Both ffmpeg tools must be available in your `$PATH`.
+
+---
+
+## Notes
+
+- MKV is the default container to avoid silent stream loss.
+- Progress display auto-disables if duration cannot be determined.
+- Hardware encoding options are opt-in and explicit.
+
+---
+
+This script is part of the **my-hacker-scripts** collection.
+
 
 ## License
 
