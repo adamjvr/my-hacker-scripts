@@ -11,18 +11,13 @@ DEFAULTS (unchanged):
 - Container: mkv
 - Encoder: software libx265
 
-OPTIONAL FEATURES:
-- MP4 output
-- Subtitle handling (container-aware)
-- 10-bit HEVC
-- Hardware encoding (VAAPI / NVENC / AMF)
-- Batch directory encoding
-- Progress bar + ETA (ffprobe-based)
+FIXES:
+- Explicit colorspace/range conversion to prevent black output
+  from full-range MOV / ProRes / RGB sources.
 """
 
 import argparse
 import subprocess
-import sys
 import re
 from pathlib import Path
 from typing import Optional
@@ -36,12 +31,10 @@ TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 
 
 def parse_timecode(h: str, m: str, s: str) -> float:
-    """Convert HH:MM:SS to seconds"""
     return int(h) * 3600 + int(m) * 60 + int(s)
 
 
 def show_progress(stderr_line: str, total_duration: Optional[float]):
-    """Render progress bar from ffmpeg stderr"""
     if total_duration is None:
         return
 
@@ -68,10 +61,6 @@ def show_progress(stderr_line: str, total_duration: Optional[float]):
 # -------------------------------------------------
 
 def get_video_duration(input_path: Path) -> Optional[float]:
-    """
-    Use ffprobe to get total video duration in seconds.
-    Returns None if duration cannot be determined.
-    """
     try:
         result = subprocess.run(
             [
@@ -117,20 +106,25 @@ def build_ffmpeg_command(
             "-c:v", "hevc_vaapi",
             "-qp", str(crf),
         ]
+
     elif hw == "nvenc":
         cmd += [
             "-c:v", "hevc_nvenc",
             "-preset", "p5",
             "-cq", str(crf),
         ]
+
     elif hw == "amf":
         cmd += [
             "-c:v", "hevc_amf",
             "-quality", "quality",
             "-qp_i", str(crf),
         ]
+
     else:
+        # 🔑 FIX: Explicit full-range → TV-range conversion
         cmd += [
+            "-vf", "scale=in_range=full:out_range=tv",
             "-c:v", "libx265",
             "-preset", preset,
             "-crf", str(crf),
