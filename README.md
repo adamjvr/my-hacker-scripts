@@ -302,7 +302,88 @@ Both ffmpeg tools must be available in your `$PATH`.
 
 ---
 
-This script is part of the **my-hacker-scripts** collection.
+## 7. ASCII Folder Tree Generator
+
+One of the newest utilities in **my-hacker-scripts**, this tool generates a clean ASCII directory tree from any folder and exports it as a properly formatted Markdown file.
+
+Perfect for:
+
+- 📦 Hardware / firmware repo documentation  
+- 🧠 Reverse-engineering archive snapshots  
+- 📚 GitHub README structure sections  
+- 🗂 Project inventory documentation  
+- 🔐 Clean forensic snapshots of repo layouts  
+
+---
+
+### 🚀 What It Does
+
+- Recursively scans a target folder  
+- Builds a properly formatted ASCII tree  
+- Outputs a Markdown file containing:
+  - Timestamp  
+  - Absolute root path  
+  - Fenced `text` code block  
+- Ignores common noise (`.git`, `__pycache__`, etc.)  
+- Optional flag to include hidden files  
+
+---
+
+### 🛠 Usage
+
+```bash
+python generate_tree_md.py /path/to/project
+```
+
+Custom output filename:
+
+```bash
+python generate_tree_md.py /path/to/project -o project_structure.md
+```
+
+Include hidden files:
+
+```bash
+python generate_tree_md.py /path/to/project --include-hidden
+```
+
+---
+
+### 📄 Example Output
+
+```text
+device_01_hw
+├── KiCad
+│   ├── device_01.kicad_sch
+│   └── device_01.kicad_pcb
+├── firmware
+│   ├── main.c
+│   └── drivers
+└── README.md
+```
+
+---
+
+### 🎯 Why This Exists
+
+Modern repositories grow quickly. Documentation usually doesn’t.
+
+This script provides a fast, repeatable way to:
+
+- Snapshot structure before refactors  
+- Archive hardware revision states  
+- Auto-generate README structure sections  
+- Maintain clean documentation discipline  
+
+---
+
+### 🧠 Philosophy
+
+Small tools.  
+No dependencies.  
+Zero fluff.  
+
+Just clean CLI utilities that solve real workflow problems.
 
 
 ## License
