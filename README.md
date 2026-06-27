@@ -377,6 +377,46 @@ This script provides a fast, repeatable way to:
 
 ---
 
+## 8. Folder ZIP Batch Archiver (`zip_each_folder.py`)
+
+A simple Linux-friendly batch archiving utility that zips every immediate folder in a target directory into its own `.zip` archive.
+
+Loose files in the target directory are ignored completely.
+
+Perfect for:
+
+- 📦 Archiving project folders one-by-one  
+- 🗂 Cleaning up messy working directories  
+- 💾 Backing up multiple folders without manually zipping each one  
+- 🧰 Batch-prepping folders for upload, transfer, or storage  
+- 🔐 Keeping archive structure predictable and repeatable  
+
+---
+
+### 🚀 What It Does
+
+- Scans a target directory  
+- Finds only immediate child folders  
+- Ignores loose files  
+- Creates one `.zip` file per folder  
+- Preserves the folder itself as the top-level item inside each archive  
+- Preserves empty directories  
+- Skips existing zip files by default  
+- Optional overwrite mode  
+- Optional output directory  
+
+---
+
+### 🛠 Usage
+
+Zip every folder in the current directory:
+
+```bash
+python zip_each_folder.py
+```
+
+---
+
 ### 🧠 Philosophy
 
 Small tools.  
