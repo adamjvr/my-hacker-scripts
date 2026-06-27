@@ -2,14 +2,10 @@
 """
 zip_each_folder.py
 
-Zip every folder in a target directory into its own .zip archive.
+Multithreaded folder-to-zip batch archiver.
 
-This script is meant for a simple workflow:
-
-    - Look inside one directory.
-    - Ignore all loose files in that directory.
-    - Find every immediate folder.
-    - Create one .zip file for each folder.
+This script scans one target directory, ignores loose files, finds every
+immediate child folder, and creates one .zip archive per folder.
 
 Example:
 
@@ -38,118 +34,289 @@ Example:
         ├── notes.txt
         └── image.png
 
-The loose files notes.txt and image.png are ignored.
+Loose files such as notes.txt and image.png are ignored.
 
-Only Python standard library modules are used.
-No pip installs required.
+Main features:
+
+    - Ignores loose files in the target directory.
+    - Zips each immediate folder into its own archive.
+    - Runs multiple folder zips at the same time.
+    - Shows terminal progress bars.
+    - Skips existing zip files unless --overwrite is used.
+    - Preserves empty directories.
+    - Keeps each folder as the top-level directory inside its zip.
 """
 
 import argparse
 import os
 import sys
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    print("[ERROR] Missing dependency: tqdm", file=sys.stderr)
+    print("Install it with:", file=sys.stderr)
+    print("    python -m pip install tqdm", file=sys.stderr)
+    sys.exit(1)
 
 
-def zip_folder(folder_path, zip_path, overwrite=False):
+# This lock prevents multiple worker threads from writing to the terminal
+# at exactly the same time.
+#
+# Without this lock, status messages from several threads could overlap and
+# make the terminal output ugly.
+print_lock = Lock()
+
+
+def safe_print(message):
     """
-    Create a zip file from a single folder.
+    Print a message without corrupting tqdm progress bars.
 
+    tqdm.write() is designed to print normal text while progress bars are
+    active. It moves the bars out of the way, prints the message, and redraws
+    the bars cleanly.
+    """
+
+    with print_lock:
+        tqdm.write(message)
+
+
+def collect_files_and_empty_dirs(folder_path):
+    """
+    Scan one folder and return everything that needs to go into its zip.
+
+    Parameters
+    ----------
     folder_path:
-        The folder that should be zipped.
+        The folder that will eventually become a .zip archive.
+
+    Returns
+    -------
+    files_to_zip:
+        List of real file paths that should be added to the zip archive.
+
+    empty_dirs_to_zip:
+        List of empty directory paths that should be explicitly preserved.
+
+    Why this exists
+    ---------------
+    The zipfile module automatically stores files, but it does not always
+    preserve empty folders unless we manually add them.
+
+    This function walks the whole folder before zipping so we know:
+
+        - how many files exist
+        - which empty directories exist
+        - how much total work the progress bar should track
+    """
+
+    files_to_zip = []
+    empty_dirs_to_zip = []
+
+    for current_root, dir_names, file_names in os.walk(folder_path):
+
+        # If a directory has no child directories and no files, it is empty.
+        #
+        # Empty directories need special handling because normal zip creation
+        # mostly stores files, not empty folders.
+        if not dir_names and not file_names:
+            empty_dirs_to_zip.append(current_root)
+
+        # Store the full path for every file found inside this folder.
+        for file_name in file_names:
+            full_file_path = os.path.join(current_root, file_name)
+            files_to_zip.append(full_file_path)
+
+    return files_to_zip, empty_dirs_to_zip
+
+
+def zip_folder(folder_path, zip_path, overwrite, file_progress_bar):
+    """
+    Zip one folder into one .zip archive.
+
+    This function is designed to run inside a worker thread.
+
+    Parameters
+    ----------
+    folder_path:
+        Real folder on disk that should be archived.
 
     zip_path:
-        The final .zip archive path.
+        Destination .zip file path.
 
     overwrite:
-        If False, skip the zip if it already exists.
-        If True, replace the existing zip.
+        If False, existing zip files are skipped.
+        If True, existing zip files are replaced.
 
-    Important archive behavior:
+    file_progress_bar:
+        Shared tqdm progress bar tracking total files zipped across all
+        worker threads.
 
-        The folder itself is included inside the zip.
+    Returns
+    -------
+    result:
+        Dictionary describing what happened.
 
-        So this:
+    Archive behavior
+    ----------------
+    The folder itself is included as the top-level item inside the zip.
 
-            ProjectA/
-            ├── file1.txt
-            └── subfolder/
-                └── file2.txt
+    Example:
 
-        Becomes this inside ProjectA.zip:
+        ProjectA/
+        ├── file1.txt
+        └── subfolder/
+            └── file2.txt
 
-            ProjectA/file1.txt
-            ProjectA/subfolder/file2.txt
+    Becomes:
 
-        This is better than dumping file1.txt directly into the root
-        of the zip archive.
+        ProjectA/file1.txt
+        ProjectA/subfolder/file2.txt
+
+    This prevents messy extraction where files explode directly into the
+    extraction directory.
     """
 
-    # If the archive already exists and overwrite mode is not enabled,
-    # skip this folder instead of destroying an existing archive.
+    folder_name = os.path.basename(folder_path)
+    zip_name = os.path.basename(zip_path)
+
+    # Skip safely if the zip already exists and overwrite mode is disabled.
     if os.path.exists(zip_path) and not overwrite:
-        print(f"[SKIP] {os.path.basename(zip_path)} already exists. Use --overwrite to replace it.")
-        return
+        return {
+            "folder": folder_name,
+            "zip": zip_name,
+            "status": "skipped",
+            "message": f"[SKIP] {zip_name} already exists. Use --overwrite to replace it.",
+            "files_zipped": 0,
+        }
 
-    print(f"[ZIP ] {os.path.basename(folder_path)} -> {os.path.basename(zip_path)}")
+    try:
+        files_to_zip, empty_dirs_to_zip = collect_files_and_empty_dirs(folder_path)
 
-    # Open the zip file in write mode.
-    #
-    # ZIP_DEFLATED means normal compressed zip output.
-    # This is the standard compression mode people expect from .zip files.
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-
-        # Walk through the folder recursively.
+        # Open the destination archive in write mode.
         #
-        # os.walk gives us:
-        #
-        #   current_root:
-        #       The folder currently being inspected.
-        #
-        #   dir_names:
-        #       Subdirectories inside current_root.
-        #
-        #   file_names:
-        #       Files inside current_root.
-        #
-        for current_root, dir_names, file_names in os.walk(folder_path):
+        # ZIP_DEFLATED gives normal compressed zip files.
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
 
-            # First, preserve empty directories.
-            #
-            # Zip files do not always store empty folders automatically,
-            # because normally only files are written.
-            #
-            # If a directory has no subdirectories and no files, we manually
-            # add a directory entry ending in "/".
-            if not dir_names and not file_names:
-                archive_dir_name = os.path.relpath(current_root, os.path.dirname(folder_path))
-                zip_file.writestr(archive_dir_name + "/", "")
+            # Preserve empty directories first.
+            for empty_dir_path in empty_dirs_to_zip:
 
-            # Now add every file in the current folder.
-            for file_name in file_names:
-
-                # Full path to the real file on disk.
-                real_file_path = os.path.join(current_root, file_name)
-
-                # Path that will be stored inside the zip.
-                #
-                # This is relative to the parent of folder_path so the folder
-                # name itself appears inside the archive.
+                # Store path relative to the parent of the folder being zipped.
                 #
                 # Example:
                 #
-                #   real_file_path:
-                #       /home/adam/stuff/ProjectA/file.txt
+                #   folder_path:
+                #       /home/adam/archive/ProjectA
                 #
-                #   archive_file_name:
-                #       ProjectA/file.txt
+                #   empty_dir_path:
+                #       /home/adam/archive/ProjectA/empty_folder
                 #
+                #   archive_dir_name:
+                #       ProjectA/empty_folder
+                #
+                archive_dir_name = os.path.relpath(
+                    empty_dir_path,
+                    os.path.dirname(folder_path)
+                )
+
+                # The trailing slash marks this zip entry as a directory.
+                zip_file.writestr(archive_dir_name + "/", "")
+
+            # Add every file to the archive.
+            for real_file_path in files_to_zip:
+
+                # Store path relative to the parent of the folder being zipped
+                # so the folder itself appears in the archive.
                 archive_file_name = os.path.relpath(
                     real_file_path,
                     os.path.dirname(folder_path)
                 )
 
-                # Add the file to the zip archive.
                 zip_file.write(real_file_path, archive_file_name)
+
+                # Update the shared progress bar by one file.
+                #
+                # tqdm is thread-safe for update() in normal use, so this works
+                # cleanly with multiple zipping threads.
+                file_progress_bar.update(1)
+
+        return {
+            "folder": folder_name,
+            "zip": zip_name,
+            "status": "zipped",
+            "message": f"[DONE] {folder_name} -> {zip_name}",
+            "files_zipped": len(files_to_zip),
+        }
+
+    except Exception as error:
+        return {
+            "folder": folder_name,
+            "zip": zip_name,
+            "status": "error",
+            "message": f"[ERROR] Failed to zip {folder_name}: {error}",
+            "files_zipped": 0,
+        }
+
+
+def find_folders_to_zip(target_dir, output_dir):
+    """
+    Find only immediate child folders inside the target directory.
+
+    Loose files are ignored.
+
+    This means the script only processes folders like:
+
+        target_dir/FolderA
+        target_dir/FolderB
+        target_dir/FolderC
+
+    It does not process loose files like:
+
+        target_dir/notes.txt
+        target_dir/image.png
+        target_dir/old_archive.zip
+    """
+
+    folders = []
+
+    for item_name in os.listdir(target_dir):
+        item_path = os.path.join(target_dir, item_name)
+
+        # Ignore loose files.
+        if not os.path.isdir(item_path):
+            continue
+
+        # Avoid zipping the output directory if the output directory lives
+        # inside the target directory.
+        if os.path.abspath(item_path) == os.path.abspath(output_dir):
+            continue
+
+        folders.append(item_path)
+
+    folders.sort()
+    return folders
+
+
+def count_total_files(folders):
+    """
+    Count total files across all folders before zipping starts.
+
+    This gives the file progress bar an accurate total.
+
+    Empty folders do not increase this count because they are preserved as
+    directory entries, not file entries.
+    """
+
+    total_files = 0
+
+    for folder_path in folders:
+        for current_root, dir_names, file_names in os.walk(folder_path):
+            total_files += len(file_names)
+
+    return total_files
 
 
 def main():
@@ -158,7 +325,7 @@ def main():
     """
 
     parser = argparse.ArgumentParser(
-        description="Zip every immediate folder into its own .zip file and ignore loose files."
+        description="Multithreaded zip utility that zips every immediate folder into its own archive."
     )
 
     parser.add_argument(
@@ -176,6 +343,14 @@ def main():
     )
 
     parser.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of folders to zip at the same time. Defaults to 4."
+    )
+
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing zip files instead of skipping them."
@@ -183,94 +358,114 @@ def main():
 
     args = parser.parse_args()
 
-    # Convert the target directory into an absolute path.
-    #
-    # expanduser allows paths like:
-    #
-    #   ~/Downloads
-    #
-    # abspath normalizes it into a full filesystem path.
     target_dir = os.path.abspath(os.path.expanduser(args.directory))
 
-    # Make sure the target exists.
     if not os.path.exists(target_dir):
         print(f"[ERROR] Directory does not exist: {target_dir}", file=sys.stderr)
         return 1
 
-    # Make sure the target is actually a directory.
     if not os.path.isdir(target_dir):
         print(f"[ERROR] Not a directory: {target_dir}", file=sys.stderr)
         return 1
 
-    # Decide where to put the zip files.
-    #
-    # If the user gave --output, use that folder.
-    # Otherwise, put the zip files in the same folder being scanned.
     if args.output:
         output_dir = os.path.abspath(os.path.expanduser(args.output))
     else:
         output_dir = target_dir
 
-    # Create the output directory if needed.
     os.makedirs(output_dir, exist_ok=True)
 
-    # Find only the immediate folders inside target_dir.
-    #
-    # This intentionally ignores loose files.
-    folders_to_zip = []
+    if args.workers < 1:
+        print("[ERROR] --workers must be 1 or higher.", file=sys.stderr)
+        return 1
 
-    for item_name in os.listdir(target_dir):
+    folders_to_zip = find_folders_to_zip(target_dir, output_dir)
 
-        # Full path to this item.
-        item_path = os.path.join(target_dir, item_name)
-
-        # Ignore loose files.
-        #
-        # This means things like .txt, .jpg, .zip, .pdf, etc.
-        # sitting directly in target_dir will not be touched.
-        if not os.path.isdir(item_path):
-            continue
-
-        # Avoid trying to zip the output folder if the output folder is
-        # located inside the target directory.
-        #
-        # Example:
-        #
-        #   python zip_each_folder.py ./stuff -o ./stuff/zips
-        #
-        # In that case, ./stuff/zips should not become zips.zip.
-        if os.path.abspath(item_path) == os.path.abspath(output_dir):
-            continue
-
-        folders_to_zip.append(item_path)
-
-    # Sort folders alphabetically so the output order is predictable.
-    folders_to_zip.sort()
-
-    # If no folders were found, exit cleanly.
     if not folders_to_zip:
         print("[INFO] No folders found. Loose files were ignored.")
         return 0
 
-    # Create one zip archive per folder.
-    for folder_path in folders_to_zip:
+    total_files = count_total_files(folders_to_zip)
 
-        # The zip filename is the folder name plus .zip.
-        #
-        # Example:
-        #
-        #   ProjectA/
-        #
-        # becomes:
-        #
-        #   ProjectA.zip
-        folder_name = os.path.basename(folder_path)
-        zip_file_name = folder_name + ".zip"
-        zip_path = os.path.join(output_dir, zip_file_name)
+    print(f"[INFO] Target directory: {target_dir}")
+    print(f"[INFO] Output directory: {output_dir}")
+    print(f"[INFO] Folders found:    {len(folders_to_zip)}")
+    print(f"[INFO] Files found:      {total_files}")
+    print(f"[INFO] Worker threads:   {args.workers}")
+    print()
 
-        zip_folder(folder_path, zip_path, overwrite=args.overwrite)
+    # Folder progress tracks completed folder archives.
+    folder_progress_bar = tqdm(
+        total=len(folders_to_zip),
+        desc="Folders zipped",
+        unit="folder",
+        position=0
+    )
 
-    print("[DONE] Folder zipping complete.")
+    # File progress tracks total files written into zip archives.
+    file_progress_bar = tqdm(
+        total=total_files,
+        desc="Files archived",
+        unit="file",
+        position=1
+    )
+
+    results = []
+
+    try:
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+
+            futures = []
+
+            for folder_path in folders_to_zip:
+                folder_name = os.path.basename(folder_path)
+                zip_file_name = folder_name + ".zip"
+                zip_path = os.path.join(output_dir, zip_file_name)
+
+                future = executor.submit(
+                    zip_folder,
+                    folder_path,
+                    zip_path,
+                    args.overwrite,
+                    file_progress_bar
+                )
+
+                futures.append(future)
+
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+
+                folder_progress_bar.update(1)
+
+                if result["status"] == "error":
+                    safe_print(result["message"])
+
+    finally:
+        folder_progress_bar.close()
+        file_progress_bar.close()
+
+    zipped_count = 0
+    skipped_count = 0
+    error_count = 0
+
+    for result in results:
+        if result["status"] == "zipped":
+            zipped_count += 1
+        elif result["status"] == "skipped":
+            skipped_count += 1
+        elif result["status"] == "error":
+            error_count += 1
+
+    print()
+    print("[SUMMARY]")
+    print(f"  Zipped:  {zipped_count}")
+    print(f"  Skipped: {skipped_count}")
+    print(f"  Errors:  {error_count}")
+
+    if error_count > 0:
+        return 1
+
     return 0
 
 
